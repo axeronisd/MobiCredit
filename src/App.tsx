@@ -115,6 +115,26 @@ const INITIAL_ACCOUNTS: UserAccount[] = [
   }
 ];
 
+const toInputDate = (dotDate: string): string => {
+  if (!dotDate) return '';
+  const parts = dotDate.split('.');
+  if (parts.length === 3) {
+    const [d, m, y] = parts;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  return '';
+};
+
+const fromInputDate = (dashDate: string): string => {
+  if (!dashDate) return '';
+  const parts = dashDate.split('-');
+  if (parts.length === 3) {
+    const [y, m, d] = parts;
+    return `${d.padStart(2, '0')}.${m.padStart(2, '0')}.${y}`;
+  }
+  return '';
+};
+
 export default function App() {
   // User accounts database from localStorage with Firestore integration
   const [users, setUsers] = useState<UserAccount[]>(() => {
@@ -253,6 +273,48 @@ export default function App() {
   const [newMarkupPercent, setNewMarkupPercent] = useState('15'); // 15% default markup max 50
   const [newDuration, setNewDuration] = useState('6'); // Срок рассрочки в месяцах (по умолчанию 6)
   const [newPhones, setNewPhones] = useState<string[]>(['']); // Номера телефонов заемщика
+  const [customPayments, setCustomPayments] = useState<Payment[]>([]);
+
+  const handleCustomPaymentDateChange = (index: number, newDate: string) => {
+    setCustomPayments((prev) => {
+      const next = [...prev];
+      if (next[index]) {
+        next[index] = { ...next[index], date: newDate };
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (!isAddModalOpen) {
+      setCustomPayments([]);
+      return;
+    }
+    const price = parseFloat(newPhonePrice) || 0;
+    const markup = parseFloat(newMarkupPercent) || 0;
+    const duration = parseInt(newDuration) || 6;
+    if (price <= 0 || duration <= 0) {
+      setCustomPayments([]);
+      return;
+    }
+    const calculatedTotal = price * (1 + markup / 100);
+    const monthlySum = Math.round(calculatedTotal / duration);
+
+    const generated: Payment[] = Array.from({ length: duration }).map((_, i) => {
+      const date = new Date();
+      date.setMonth(date.getMonth() + i + 1);
+      const dayStr = String(date.getDate()).padStart(2, '0');
+      const monStr = String(date.getMonth() + 1).padStart(2, '0');
+      const yr = date.getFullYear();
+      return {
+        id: `p-gen-${Date.now()}-${i}`,
+        date: `${dayStr}.${monStr}.${yr}`,
+        amount: monthlySum,
+        status: 'pending' as const
+      };
+    });
+    setCustomPayments(generated);
+  }, [newPhonePrice, newMarkupPercent, newDuration, isAddModalOpen]);
 
   // Handles helper for phones array
   const handleAddPhoneField = () => {
@@ -437,8 +499,8 @@ export default function App() {
     const calculatedTotal = price * (1 + markup / 100);
     const monthlySum = Math.round(calculatedTotal / duration);
 
-    // Dynamic generation of monthly installment schedule
-    const generatedPayments: Payment[] = Array.from({ length: duration }).map((_, i) => {
+    // Use custom payments schedule edited by the user, with standard fallback if length differs
+    const finalPayments = customPayments.length === duration ? customPayments : Array.from({ length: duration }).map((_, i) => {
       const date = new Date();
       date.setMonth(date.getMonth() + i + 1);
       const dayStr = String(date.getDate()).padStart(2, '0');
@@ -448,7 +510,7 @@ export default function App() {
         id: `p-gen-${Date.now()}-${i}`,
         date: `${dayStr}.${monStr}.${yr}`,
         amount: monthlySum,
-        status: 'pending'
+        status: 'pending' as const
       };
     });
 
@@ -469,7 +531,7 @@ export default function App() {
       phonePrice: price,
       markupPercent: markup,
       totalRemaining: Math.round(calculatedTotal),
-      payments: generatedPayments
+      payments: finalPayments
     };
 
     try {
@@ -485,6 +547,7 @@ export default function App() {
       setNewMarkupPercent('15');
       setNewDuration('6');
       setNewPhones(['']);
+      setCustomPayments([]);
       setIsAddModalOpen(false);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `clients/${newClient.id}`);
@@ -1662,6 +1725,45 @@ export default function App() {
                   <p className="text-[10px] text-stone-400 mt-1 italic text-center leading-xs">
                      Будет сформировано {newDuration} плановых платежей по {Math.round(( (parseFloat(newPhonePrice) || 0) * (1 + (parseFloat(newMarkupPercent) || 0) / 100) ) / (parseInt(newDuration) || 6)).toLocaleString()} сом.
                   </p>
+                </div>
+              )}
+
+              {/* Customizable Payment Schedule List */}
+              {customPayments.length > 0 && (
+                <div className="space-y-1.5 border-t border-stone-100 pt-3">
+                  <span className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">
+                    График платежей (настройте даты здесь):
+                  </span>
+                  <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                    {customPayments.map((p, idx) => (
+                      <div key={idx} className="flex items-center justify-between gap-2 bg-stone-50 p-1.5 rounded-lg border border-stone-200/60 shadow-xxs">
+                        <span className="text-[9px] font-bold font-mono text-stone-400 w-5 text-center">
+                          #{idx + 1}
+                        </span>
+                        
+                        <div className="flex-1">
+                          <input
+                            type="date"
+                            required
+                            value={toInputDate(p.date)}
+                            onChange={(e) => {
+                              const standardDate = fromInputDate(e.target.value);
+                              if (standardDate) {
+                                handleCustomPaymentDateChange(idx, standardDate);
+                              }
+                            }}
+                            className="w-full px-2 py-1 border border-stone-200 rounded-md text-xs font-semibold text-stone-850 bg-white focus:outline-none focus:border-stone-900 focus:ring-1 focus:ring-stone-900 font-mono"
+                          />
+                        </div>
+
+                        <div className="text-right shrink-0 px-1">
+                          <span className="text-xs font-bold font-mono text-stone-800">
+                            {p.amount.toLocaleString()} сом
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
