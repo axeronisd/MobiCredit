@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "Payment": {
+      "title": "Payment",
+      "description": "Information about a single payment status and amount",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["paid", "pending"] }
+      },
+      "required": ["id", "date", "amount", "status"]
+    },
+    "ClientInstallment": {
+      "title": "ClientInstallment",
+      "description": "Represents an installment contract details for a client",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "inn": { "type": "string" },
+        "phoneModel": { "type": "string" },
+        "phone": { "type": "string" },
+        "imei": { "type": "string" },
+        "phonePrice": { "type": "number" },
+        "markupPercent": { "type": "number" },
+        "totalRemaining": { "type": "number" },
+        "payments": { "type": "array" }
+      },
+      "required": ["id", "tenantId", "firstName", "lastName", "inn", "phoneModel", "imei", "phonePrice", "markupPercent", "totalRemaining", "payments"]
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Independent tenant account with access credentials",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "login": { "type": "string" },
+        "passwordHash": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manager"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "login", "passwordHash", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserAccount",
+      "description": "List of authorized managers and administrators"
+    },
+    "/clients/{clientId}": {
+      "schema": "ClientInstallment",
+      "description": "List of client installment contracts"
+    }
+  }
+}

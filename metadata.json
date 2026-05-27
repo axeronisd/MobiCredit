@@ -1,0 +1,6 @@
+{
+  "name": "Login Screen",
+  "description": "A beautiful, minimalist, and highly polished login screen with smooth transitions and micro-interactions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
