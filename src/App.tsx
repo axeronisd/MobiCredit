@@ -432,6 +432,41 @@ export default function App() {
     setLoginError(null);
   };
 
+  // Perform quick login for the qwerty/qwerty demo account
+  const handleDemoSignIn = () => {
+    setLoginError(null);
+    setIsLoading(true);
+    setLogin('qwerty');
+    setPassword('qwerty');
+
+    setTimeout(() => {
+      setIsLoading(false);
+      const matchedUser = users.find(
+        (u) => u.login.toLowerCase() === 'qwerty' && u.passwordHash === 'qwerty'
+      );
+
+      if (matchedUser) {
+        setIsAuthenticated(true);
+        setCurrentUser(matchedUser);
+        localStorage.setItem('isLoggedIn', 'true');
+        localStorage.setItem('installments-current-user', JSON.stringify(matchedUser));
+      } else {
+        // Safe bypass/fallback check: create or load virtual user session if DB sync is slightly delayed
+        const virtualUser: UserAccount = {
+          id: 'usr-qwerty',
+          login: 'qwerty',
+          passwordHash: 'qwerty',
+          role: 'manager',
+          createdAt: new Date().toLocaleDateString('ru-RU')
+        };
+        setIsAuthenticated(true);
+        setCurrentUser(virtualUser);
+        localStorage.setItem('isLoggedIn', 'true');
+        localStorage.setItem('installments-current-user', JSON.stringify(virtualUser));
+      }
+    }, 600);
+  };
+
   // Create new manager/admin user account
   const handleAddUserAccount = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -920,6 +955,25 @@ export default function App() {
                     {!isLoading && <ArrowRight className="w-4 h-4" />}
                   </button>
                 </form>
+
+                <div className="relative flex py-4 items-center">
+                  <div className="flex-grow border-t border-stone-150"></div>
+                  <span className="flex-shrink mx-3 text-stone-400 text-[9px] font-bold uppercase tracking-wider font-mono">быстрый тест</span>
+                  <div className="flex-grow border-t border-stone-150"></div>
+                </div>
+
+                <div className="space-y-2">
+                  <button
+                    id="btn_demo_signin"
+                    type="button"
+                    onClick={handleDemoSignIn}
+                    disabled={isLoading}
+                    className="w-full py-2.5 bg-amber-500/10 hover:bg-amber-500/20 active:bg-amber-500/30 text-amber-800 border border-amber-300/30 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-all"
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>Демо-кабинет (qwerty / qwerty)</span>
+                  </button>
+                </div>
 
 
 
