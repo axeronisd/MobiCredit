@@ -336,7 +336,8 @@ export default function App() {
       setCustomPayments([]);
       return;
     }
-    const calculatedTotal = price * (1 + markup / 100);
+    const margin = Math.round(price * (markup / 100));
+    const calculatedTotal = price + margin;
     const monthlySum = Math.round(calculatedTotal / duration);
 
     const generated: Payment[] = Array.from({ length: duration }).map((_, i) => {
@@ -345,10 +346,15 @@ export default function App() {
       const dayStr = String(date.getDate()).padStart(2, '0');
       const monStr = String(date.getMonth() + 1).padStart(2, '0');
       const yr = date.getFullYear();
+      
+      // Balance the last payment to ensure the exact total contract sum is matched down to the single som
+      const isLast = i === duration - 1;
+      const paymentAmount = isLast ? (calculatedTotal - (monthlySum * (duration - 1))) : monthlySum;
+
       return {
         id: `p-gen-${Date.now()}-${i}`,
         date: `${dayStr}.${monStr}.${yr}`,
-        amount: monthlySum,
+        amount: paymentAmount,
         status: 'pending' as const
       };
     });
@@ -535,7 +541,8 @@ export default function App() {
       return;
     }
 
-    const calculatedTotal = price * (1 + markup / 100);
+    const margin = Math.round(price * (markup / 100));
+    const calculatedTotal = price + margin;
     const monthlySum = Math.round(calculatedTotal / duration);
 
     // Use custom payments schedule edited by the user, with standard fallback if length differs
@@ -545,10 +552,14 @@ export default function App() {
       const dayStr = String(date.getDate()).padStart(2, '0');
       const monStr = String(date.getMonth() + 1).padStart(2, '0');
       const yr = date.getFullYear();
+      
+      const isLast = i === duration - 1;
+      const paymentAmount = isLast ? (calculatedTotal - (monthlySum * (duration - 1))) : monthlySum;
+
       return {
         id: `p-gen-${Date.now()}-${i}`,
         date: `${dayStr}.${monStr}.${yr}`,
-        amount: monthlySum,
+        amount: paymentAmount,
         status: 'pending' as const
       };
     });
