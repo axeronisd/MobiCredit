@@ -18,6 +18,7 @@ export interface ClientInstallment {
   markupPercent: number; // e.g. 15 for 15%
   totalRemaining: number;
   payments: Payment[];
+  createdAt?: string; // ISO timestamp
 }
 
 export interface UserAccount {

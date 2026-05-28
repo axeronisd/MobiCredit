@@ -135,6 +135,23 @@ const fromInputDate = (dashDate: string): string => {
   return '';
 };
 
+const getClientCreatedAt = (client: ClientInstallment): Date => {
+  if (client.createdAt) {
+    return new Date(client.createdAt);
+  }
+  // Safe Fallback if client has no createdAt timestamp in DB yet
+  const idParts = client.id.split('-');
+  if (idParts[0] === 'cl' && idParts[1] && !isNaN(Number(idParts[1])) && idParts[1].length > 6) {
+    return new Date(Number(idParts[1]));
+  }
+  // For cl-1, cl-2, cl-3 from INITIAL_CLIENTS which represent historic samples from May 2026
+  if (client.id === 'cl-1') return new Date('2026-05-15T12:00:00Z');
+  if (client.id === 'cl-2') return new Date('2026-05-10T12:00:00Z');
+  if (client.id === 'cl-3') return new Date('2026-05-20T12:00:00Z');
+  
+  return new Date(); // fallback safe
+};
+
 export default function App() {
   // User accounts database from localStorage with Firestore integration
   const [users, setUsers] = useState<UserAccount[]>(() => {
@@ -254,8 +271,14 @@ export default function App() {
 
   // General dashboard controls
   const [searchTerm, setSearchTerm] = useState('');
+  const [clientStatusTab, setClientStatusTab] = useState<'all' | 'active' | 'closed'>('all');
   const [selectedTenantFilter, setSelectedTenantFilter] = useState<string>('all');
   const [selectedClient, setSelectedClient] = useState<ClientInstallment | null>(null);
+
+  // Time & custom range analytics filter states
+  const [dateFilterType, setDateFilterType] = useState<'all' | 'week' | 'month' | 'year' | 'custom'>('all');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
   
   // Payment dynamic controls
   const [payAmount, setPayAmount] = useState<string>('');
@@ -531,7 +554,8 @@ export default function App() {
       phonePrice: price,
       markupPercent: markup,
       totalRemaining: Math.round(calculatedTotal),
-      payments: finalPayments
+      payments: finalPayments,
+      createdAt: new Date().toISOString()
     };
 
     try {
@@ -610,27 +634,92 @@ export default function App() {
     }
   };
 
-  // 1. ISOLATED TENANT FILTERING (The core multi-tenant engine) - managers only see their own cabinet, admins can filter by tenant
+  // 1. ISOLATED TENANT FILTERING (The core multi-tenant engine) with integrated Date & Period filter
   const tenantFilteredClients = useMemo(() => {
     if (!currentUser) return [];
+    
+    // First, isolate database records by user role and selected tenant filter
+    let baseClients: ClientInstallment[] = [];
     if (currentUser.role === 'admin') {
       if (selectedTenantFilter === 'all') {
-        return clients;
+        baseClients = clients;
+      } else {
+        baseClients = clients.filter(c => c.tenantId === selectedTenantFilter);
       }
-      return clients.filter(c => c.tenantId === selectedTenantFilter);
     } else {
-      // Regular tenant (manager role) is isolated completely inside their own database/cabinet
-      return clients.filter(c => c.tenantId === currentUser.id);
+      baseClients = clients.filter(c => c.tenantId === currentUser.id);
     }
-  }, [clients, currentUser, selectedTenantFilter]);
+
+    // Second, apply time-range filters (week, month, year, custom range)
+    const now = new Date();
+    return baseClients.filter(c => {
+      const createdAt = getClientCreatedAt(c);
+      
+      if (dateFilterType === 'week') {
+        const diffTime = now.getTime() - createdAt.getTime();
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        return diffDays >= 0 && diffDays <= 7;
+      }
+      
+      if (dateFilterType === 'month') {
+        const diffTime = now.getTime() - createdAt.getTime();
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        return diffDays >= 0 && diffDays <= 30;
+      }
+      
+      if (dateFilterType === 'year') {
+        const diffTime = now.getTime() - createdAt.getTime();
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        return diffDays >= 0 && diffDays <= 365;
+      }
+      
+      if (dateFilterType === 'custom') {
+        if (customStartDate) {
+          const start = new Date(customStartDate);
+          start.setHours(0, 0, 0, 0);
+          if (createdAt < start) return false;
+        }
+        if (customEndDate) {
+          const end = new Date(customEndDate);
+          end.setHours(23, 59, 59, 999);
+          if (createdAt > end) return false;
+        }
+        return true;
+      }
+      
+      return true; // 'all'
+    });
+  }, [clients, currentUser, selectedTenantFilter, dateFilterType, customStartDate, customEndDate]);
 
   // 2. Search query filter applied on the isolated/active tenant dataset
   const filteredClients = useMemo(() => {
     return tenantFilteredClients.filter((c) => {
+      // Filter by status tab (active / closed)
+      if (clientStatusTab === 'active' && c.totalRemaining === 0) return false;
+      if (clientStatusTab === 'closed' && c.totalRemaining > 0) return false;
+
       const combined = `${c.firstName} ${c.lastName} ${c.phoneModel} ${c.imei} ${c.inn} ${c.phone || ''}`.toLowerCase();
       return combined.includes(searchTerm.toLowerCase());
     });
-  }, [tenantFilteredClients, searchTerm]);
+  }, [tenantFilteredClients, searchTerm, clientStatusTab]);
+
+  // 3. Compute detailed profit metrics / margins (total margins, earned margin, scheduled expected margin)
+  const marginMetrics = useMemo(() => {
+    let total = 0;
+    let earned = 0;
+    let expected = 0;
+    tenantFilteredClients.forEach((c) => {
+      const marginTotal = Math.round(c.phonePrice * (c.markupPercent / 100));
+      const totalCost = Math.round(c.phonePrice * (1 + c.markupPercent / 100));
+      const marginExpected = totalCost > 0 ? Math.round((c.totalRemaining / totalCost) * marginTotal) : 0;
+      const marginEarned = Math.max(0, marginTotal - marginExpected);
+
+      total += marginTotal;
+      earned += marginEarned;
+      expected += marginExpected;
+    });
+    return { total, earned, expected };
+  }, [tenantFilteredClients]);
 
   return (
     <div className="min-h-screen bg-[#F6F6F9] text-stone-900 flex flex-col font-sans selection:bg-stone-900 selection:text-white antialiased">
@@ -1018,6 +1107,114 @@ export default function App() {
                 </button>
               </div>
 
+              {/* Date & Analytics Filter Bar */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-stone-50 p-3 rounded-xl border border-stone-200/60 text-xs shadow-xxs">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="font-bold text-stone-500 uppercase tracking-wider text-[10px]">Период создания:</span>
+                  <div className="flex flex-wrap gap-1 p-0.5 bg-stone-200/60 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDateFilterType('all');
+                        setSelectedClient(null);
+                      }}
+                      className={`px-3 py-1 py-1.5 rounded-md font-sans font-bold transition-all text-[11px] cursor-pointer ${
+                        dateFilterType === 'all'
+                          ? 'bg-stone-900 text-stone-50 shadow-xxs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Все время
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDateFilterType('week');
+                        setSelectedClient(null);
+                      }}
+                      className={`px-3 py-1 py-1.5 rounded-md font-sans font-bold transition-all text-[11px] cursor-pointer ${
+                        dateFilterType === 'week'
+                          ? 'bg-stone-900 text-stone-50 shadow-xxs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Неделя
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDateFilterType('month');
+                        setSelectedClient(null);
+                      }}
+                      className={`px-3 py-1 py-1.5 rounded-md font-sans font-bold transition-all text-[11px] cursor-pointer ${
+                        dateFilterType === 'month'
+                          ? 'bg-stone-900 text-stone-50 shadow-xxs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Месяц
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDateFilterType('year');
+                        setSelectedClient(null);
+                      }}
+                      className={`px-3 py-1 py-1.5 rounded-md font-sans font-bold transition-all text-[11px] cursor-pointer ${
+                        dateFilterType === 'year'
+                          ? 'bg-stone-900 text-stone-50 shadow-xxs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Год
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDateFilterType('custom');
+                        setSelectedClient(null);
+                      }}
+                      className={`px-3 py-1.5 rounded-md font-sans font-bold transition-all text-[11px] cursor-pointer ${
+                        dateFilterType === 'custom'
+                          ? 'bg-stone-900 text-stone-50 shadow-xxs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Выбрать период
+                    </button>
+                  </div>
+                </div>
+
+                {dateFilterType === 'custom' && (
+                  <div className="flex flex-wrap items-center gap-2.5 animate-fadeIn font-medium text-stone-600">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-bold text-stone-400">С:</span>
+                      <input
+                        type="date"
+                        value={customStartDate}
+                        onChange={(e) => {
+                          setCustomStartDate(e.target.value);
+                          setSelectedClient(null);
+                        }}
+                        className="px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-stone-950 font-mono bg-white shadow-xxs cursor-pointer"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-bold text-stone-400">По:</span>
+                      <input
+                        type="date"
+                        value={customEndDate}
+                        onChange={(e) => {
+                          setCustomEndDate(e.target.value);
+                          setSelectedClient(null);
+                        }}
+                        className="px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-stone-950 font-mono bg-white shadow-xxs cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Portfolio Summary Widgets (Highly Requested UX Improvement) */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 border-t border-stone-100">
                 <div className="bg-stone-50/60 p-3 rounded-xl border border-stone-150/40 text-left">
@@ -1041,6 +1238,31 @@ export default function App() {
                   <p className="text-base sm:text-lg font-mono font-bold text-emerald-800 mt-0.5">
                     {tenantFilteredClients.filter(c => c.totalRemaining === 0).length}
                   </p>
+                </div>
+              </div>
+
+              {/* Margin & Earnings Summary Widgets */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-dotted border-stone-200">
+                <div className="bg-emerald-50/30 p-3 rounded-xl border border-emerald-100 text-left">
+                  <span className="text-[10px] text-emerald-800 font-bold uppercase tracking-wider block">Общая маржа (наценка)</span>
+                  <p className="text-base sm:text-lg font-mono font-bold text-emerald-900 mt-0.5">
+                    {marginMetrics.total.toLocaleString()} сом
+                  </p>
+                  <span className="text-[9px] text-stone-400 block mt-0.5 font-medium">Общий потенциальный доход</span>
+                </div>
+                <div className="bg-emerald-600 p-3 rounded-xl text-left text-emerald-50 shadow-xs">
+                  <span className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider block">Уже заработано (выплачено)</span>
+                  <p className="text-base sm:text-lg font-mono font-bold text-white mt-0.5">
+                    {marginMetrics.earned.toLocaleString()} сом
+                  </p>
+                  <span className="text-[9px] text-emerald-200/80 block mt-0.5 font-medium">Списанная доля наценки</span>
+                </div>
+                <div className="bg-stone-50 p-3 rounded-xl border border-stone-200/80 text-left">
+                  <span className="text-[10px] text-stone-550 font-bold uppercase tracking-wider block">Ожидается заработать</span>
+                  <p className="text-base sm:text-lg font-mono font-bold text-stone-850 mt-0.5">
+                    {marginMetrics.expected.toLocaleString()} сом
+                  </p>
+                  <span className="text-[9px] text-stone-400 block mt-0.5 font-medium">Маржа в активных договорах</span>
                 </div>
               </div>
             </div>
@@ -1111,17 +1333,63 @@ export default function App() {
               
               {/* Clients Sidebar List. Omit/Hide on mobile if detailed view is open */}
               <div className={`lg:col-span-6 space-y-2.5 ${selectedClient ? 'hidden lg:block' : 'block'}`}>
-                <div className="flex justify-between items-center px-1">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
                   <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">
-                    Всего договоров ({filteredClients.length})
+                    Договоры ({filteredClients.length})
                   </span>
+                  
+                  {/* Status selection tabs */}
+                  <div className="bg-stone-200/80 p-0.5 rounded-lg flex items-center text-[10px] font-bold font-sans self-start sm:self-auto shadow-xxs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClientStatusTab('all');
+                        setSelectedClient(null);
+                      }}
+                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                        clientStatusTab === 'all'
+                          ? 'bg-stone-900 text-stone-50 shadow-xxs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Все ({tenantFilteredClients.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClientStatusTab('active');
+                        setSelectedClient(null);
+                      }}
+                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                        clientStatusTab === 'active'
+                          ? 'bg-amber-500 text-amber-950 shadow-xxs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Активные ({tenantFilteredClients.filter(c => c.totalRemaining > 0).length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClientStatusTab('closed');
+                        setSelectedClient(null);
+                      }}
+                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                        clientStatusTab === 'closed'
+                          ? 'bg-emerald-600 text-emerald-50 shadow-xxs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Закрытые ({tenantFilteredClients.filter(c => c.totalRemaining === 0).length})
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
                   {filteredClients.length === 0 ? (
                     <div className="bg-white border border-stone-200 rounded-2xl p-8 text-center text-stone-400 text-xs flex flex-col items-center justify-center gap-2">
                       <Inbox className="w-8 h-8 text-stone-300" />
-                      <span>Никого не найдено с таким запросом</span>
+                      <span>Никого не найдено в этой вкладке</span>
                     </div>
                   ) : (
                     filteredClients.map((client) => {
@@ -1189,10 +1457,24 @@ export default function App() {
                               </span>
                               {client.phone && (
                                 <span className={`flex items-center gap-1 mt-1 font-sans ${isSelected ? 'text-stone-300' : 'text-stone-500'}`}>
-                                  <Phone className="w-3 h-3 text-stone-450 shrink-0" />
+                                  <Phone className="w-3.5 h-3.5 text-stone-450 shrink-0" />
                                   <span className="truncate">{client.phone}</span>
                                 </span>
                               )}
+                            </div>
+
+                            {/* Forever Visible Margin display */}
+                            <div className="mt-2.5 flex flex-wrap gap-1.5 items-center">
+                              <span className={`text-[10px] font-bold rounded px-1.5 py-0.5 tracking-tight border ${
+                                isSelected 
+                                  ? 'bg-emerald-950 text-emerald-300 border-emerald-800/60' 
+                                  : 'bg-emerald-50 text-emerald-800 border-emerald-100'
+                              }`}>
+                                Маржа (доход): +{Math.round(client.phonePrice * (client.markupPercent / 100)).toLocaleString()} сом
+                              </span>
+                              <span className={`text-[9.5px] font-mono ${isSelected ? 'text-stone-400' : 'text-stone-500'}`}>
+                                (наценка {client.markupPercent}%)
+                              </span>
                             </div>
                           </div>
 
@@ -1272,7 +1554,7 @@ export default function App() {
                     </div>
 
                     {/* Hardware purchase summary */}
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <div className="bg-stone-50 rounded-xl p-2.5 text-left border border-stone-150/50">
                         <span className="text-[9px] text-stone-450 font-semibold block uppercase tracking-wider mb-0.5">Цена</span>
                         <span className="text-xs sm:text-sm font-bold font-mono text-stone-900 leading-none">
@@ -1284,6 +1566,12 @@ export default function App() {
                         <span className="text-xs sm:text-sm font-bold font-mono text-stone-900 leading-none flex items-center gap-0.5">
                           {selectedClient.markupPercent}% 
                           <Percent className="w-3 h-3 text-stone-400" />
+                        </span>
+                      </div>
+                      <div className="bg-emerald-50 rounded-xl p-2.5 text-left border border-emerald-100">
+                        <span className="text-[9px] text-emerald-705 font-bold block uppercase tracking-wider mb-0.5">Маржа</span>
+                        <span className="text-xs sm:text-sm font-bold font-mono text-emerald-800 leading-none">
+                          +{Math.round(selectedClient.phonePrice * (selectedClient.markupPercent / 100)).toLocaleString()}&nbsp;с.
                         </span>
                       </div>
                       <div className="bg-stone-900 rounded-xl p-2.5 text-left">
