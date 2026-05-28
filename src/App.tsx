@@ -727,8 +727,22 @@ export default function App() {
     tenantFilteredClients.forEach((c) => {
       const marginTotal = Math.round(c.phonePrice * (c.markupPercent / 100));
       const totalCost = Math.round(c.phonePrice * (1 + c.markupPercent / 100));
-      const marginExpected = totalCost > 0 ? Math.round((c.totalRemaining / totalCost) * marginTotal) : 0;
-      const marginEarned = Math.max(0, marginTotal - marginExpected);
+      
+      let marginEarned = 0;
+      if (c.totalRemaining === 0) {
+        // Fully ended contract represents 100% earned margin
+        marginEarned = marginTotal;
+      } else {
+        // Otherwise, calculate proportionally using payments labeled 'paid' in the schedule
+        const paidPaymentsAmount = c.payments
+          .filter((p) => p.status === 'paid')
+          .reduce((sum, p) => sum + p.amount, 0);
+        
+        marginEarned = totalCost > 0 ? Math.round((paidPaymentsAmount / totalCost) * marginTotal) : 0;
+        marginEarned = Math.max(0, Math.min(marginTotal, marginEarned));
+      }
+
+      const marginExpected = Math.max(0, marginTotal - marginEarned);
 
       total += marginTotal;
       earned += marginEarned;
