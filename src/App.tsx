@@ -239,6 +239,9 @@ export default function App() {
   const [newImei, setNewImei] = useState(''); // IMEI телефона
   const [newPhonePrice, setNewPhonePrice] = useState('');
   const [newMarkupPercent, setNewMarkupPercent] = useState('15'); // 15% default markup max 50
+  const [markupType, setMarkupType] = useState<'percent' | 'fixed'>('percent');
+  const [newMarkupFixed, setNewMarkupFixed] = useState('');
+  const [isManualSchedule, setIsManualSchedule] = useState(false);
   const [newDuration, setNewDuration] = useState('6'); // Срок рассрочки в месяцах (по умолчанию 6)
   const [newPhones, setNewPhones] = useState<string[]>(['']); // Номера телефонов заемщика
   const [customPayments, setCustomPayments] = useState<Payment[]>([]);
@@ -272,16 +275,31 @@ export default function App() {
   useEffect(() => {
     if (!isAddModalOpen) {
       setCustomPayments([]);
+      setNewMarkupPercent('15');
+      setNewMarkupFixed('');
+      setMarkupType('percent');
+      setIsManualSchedule(false);
       return;
     }
+    
+    if (isManualSchedule) return;
+
     const price = parseFloat(newPhonePrice) || 0;
-    const markup = parseFloat(newMarkupPercent) || 0;
+    
+    let margin = 0;
+    if (markupType === 'percent') {
+      const markup = parseFloat(newMarkupPercent) || 0;
+      margin = Math.round(price * (markup / 100));
+    } else {
+      margin = parseFloat(newMarkupFixed) || 0;
+    }
+    
     const duration = parseInt(newDuration) || 6;
     if (price <= 0 || duration <= 0) {
       setCustomPayments([]);
       return;
     }
-    const margin = Math.round(price * (markup / 100));
+    
     const calculatedTotal = price + margin;
     const monthlySum = Math.round(calculatedTotal / duration);
 
@@ -292,7 +310,6 @@ export default function App() {
       const monStr = String(date.getMonth() + 1).padStart(2, '0');
       const yr = date.getFullYear();
       
-      // Balance the last payment to ensure the exact total contract sum is matched down to the single som
       const isLast = i === duration - 1;
       const paymentAmount = isLast ? (calculatedTotal - (monthlySum * (duration - 1))) : monthlySum;
 
@@ -304,7 +321,32 @@ export default function App() {
       };
     });
     setCustomPayments(generated);
-  }, [newPhonePrice, newMarkupPercent, newDuration, isAddModalOpen]);
+  }, [newPhonePrice, newMarkupPercent, newMarkupFixed, markupType, newDuration, isAddModalOpen, isManualSchedule]);
+
+  const handleCustomPaymentAmountChange = (index: number, newAmount: string) => {
+    const nextAmount = parseFloat(newAmount) || 0;
+    
+    setCustomPayments((prev) => {
+      const next = prev.map(p => ({ ...p, amount: nextAmount }));
+      
+      const price = parseFloat(newPhonePrice) || 0;
+      const totalAmount = next.reduce((sum, p) => sum + p.amount, 0);
+      const newMargin = totalAmount - price;
+      
+      // We asynchronously update the global fields and lock away auto-generation
+      setTimeout(() => {
+        setIsManualSchedule(true);
+        setMarkupType('fixed');
+        setNewMarkupFixed(String(newMargin));
+        if (price > 0) {
+          const newPercent = (newMargin / price) * 100;
+          setNewMarkupPercent(newPercent.toFixed(2).replace(/\.00$/, '')); // clean format
+        }
+      }, 0);
+      
+      return next;
+    });
+  };
 
   // Handles helper for phones array
   const handleAddPhoneField = () => {
@@ -618,8 +660,8 @@ export default function App() {
       return;
     }
 
-    if (markup < 0 || markup > 50) {
-      alert('Наценка должна быть в диапазоне от 0% до 50%');
+    if (markup < 0 || markup > 2000) {
+      alert('Наценка должна быть в диапазоне от 0% до 2000%');
       return;
     }
 
@@ -628,12 +670,11 @@ export default function App() {
       return;
     }
 
-    const margin = Math.round(price * (markup / 100));
-    const calculatedTotal = price + margin;
-    const monthlySum = Math.round(calculatedTotal / duration);
-
     // Use custom payments schedule edited by the user, with standard fallback if length differs
     const finalPayments = customPayments.length === duration ? customPayments : Array.from({ length: duration }).map((_, i) => {
+      const margin = Math.round(price * (markup / 100));
+      const calculatedTotal = price + margin;
+      const monthlySum = Math.round(calculatedTotal / duration);
       const date = new Date();
       date.setMonth(date.getMonth() + i + 1);
       const dayStr = String(date.getDate()).padStart(2, '0');
@@ -651,6 +692,8 @@ export default function App() {
       };
     });
 
+    const trueCalculatedTotal = finalPayments.reduce((sum, p) => sum + p.amount, 0);
+
     const joinedPhones = newPhones
       .map((p) => p.trim())
       .filter((p) => p !== '')
@@ -666,8 +709,8 @@ export default function App() {
       phone: joinedPhones || undefined,
       imei: newImei.trim(),
       phonePrice: price,
-      markupPercent: markup,
-      totalRemaining: Math.round(calculatedTotal),
+      markupPercent: Math.round(markup * 10) / 10,
+      totalRemaining: trueCalculatedTotal,
       payments: finalPayments,
       createdAt: new Date().toISOString()
     };
@@ -2187,27 +2230,55 @@ export default function App() {
                     required
                     placeholder="85000"
                     value={newPhonePrice}
-                    onChange={(e) => setNewPhonePrice(e.target.value)}
+                    onChange={(e) => {
+                      setNewPhonePrice(e.target.value);
+                      setIsManualSchedule(false);
+                    }}
                     className="w-full px-3 py-2 border border-stone-200 rounded-lg text-xs hover:border-stone-300 focus:outline-none focus:border-stone-900 font-semibold"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-semibold text-stone-500 mb-1">Наценка (от 0% до 50%)</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[10px] font-semibold text-stone-500">Наценка</label>
+                    <div className="flex bg-stone-100 rounded text-[9px] p-0.5">
+                      <button type="button" onClick={() => { setMarkupType('percent'); setIsManualSchedule(false); }} className={`px-1.5 py-0.5 rounded-sm transition-colors ${markupType === 'percent' ? 'bg-white shadow text-stone-900 font-bold' : 'text-stone-500 hover:text-stone-700'}`}>В %</button>
+                      <button type="button" onClick={() => { setMarkupType('fixed'); setIsManualSchedule(false); }} className={`px-1.5 py-0.5 rounded-sm transition-colors ${markupType === 'fixed' ? 'bg-white shadow text-stone-900 font-bold' : 'text-stone-500 hover:text-stone-700'}`}>В сом</button>
+                    </div>
+                  </div>
                   <div className="flex items-center relative">
-                    <input
-                      type="number"
-                      required
-                      min="0"
-                      max="50"
-                      placeholder="15"
-                      value={newMarkupPercent}
-                      onChange={(e) => {
-                        const val = Math.min(50, Math.max(0, parseInt(e.target.value) || 0));
-                        setNewMarkupPercent(String(val));
-                      }}
-                      className="w-full px-3 pr-6 py-2 border border-stone-200 rounded-lg text-xs hover:border-stone-300 focus:outline-none focus:border-stone-900 font-semibold"
-                    />
-                    <span className="absolute right-2.5 text-stone-400 text-[10px] font-bold">%</span>
+                    {markupType === 'percent' ? (
+                      <>
+                        <input
+                          type="number"
+                          required
+                          min="0"
+                          max="1000"
+                          placeholder="15"
+                          value={newMarkupPercent}
+                          onChange={(e) => {
+                            setNewMarkupPercent(e.target.value);
+                            setIsManualSchedule(false);
+                          }}
+                          className="w-full px-3 pr-6 py-2 border border-stone-200 rounded-lg text-xs hover:border-stone-300 focus:outline-none focus:border-stone-900 font-semibold"
+                        />
+                        <span className="absolute right-2.5 text-stone-400 text-[10px] font-bold">%</span>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          type="number"
+                          required
+                          min="0"
+                          placeholder="15000"
+                          value={newMarkupFixed}
+                          onChange={(e) => {
+                            setNewMarkupFixed(e.target.value);
+                            setIsManualSchedule(false);
+                          }}
+                          className="w-full px-3 py-2 border border-stone-200 rounded-lg text-xs hover:border-stone-300 focus:outline-none focus:border-stone-900 font-semibold"
+                        />
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2226,6 +2297,7 @@ export default function App() {
                       onChange={(e) => {
                         const val = Math.min(60, Math.max(1, parseInt(e.target.value) || 1));
                         setNewDuration(String(val));
+                        setIsManualSchedule(false);
                       }}
                       className="w-full px-3 py-2 border border-stone-200 rounded-lg text-xs hover:border-stone-300 focus:outline-none focus:border-stone-900 font-semibold"
                     />
@@ -2236,7 +2308,7 @@ export default function App() {
                       <button
                         key={m}
                         type="button"
-                        onClick={() => setNewDuration(m)}
+                        onClick={() => { setNewDuration(m); setIsManualSchedule(false); }}
                         className={`text-[10px] px-2 py-1.5 border rounded-lg font-bold tracking-tight transition-all cursor-pointer ${
                           newDuration === m
                             ? 'bg-stone-900 text-stone-50 border-stone-900'
@@ -2257,19 +2329,27 @@ export default function App() {
                     <span>Базовая стоимость:</span>
                     <span className="font-mono text-stone-900">{parseFloat(newPhonePrice).toLocaleString() || 0} сом</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Наценка ({newMarkupPercent}%):</span>
-                    <span className="font-mono text-stone-900">{( (parseFloat(newPhonePrice) || 0) * (parseFloat(newMarkupPercent) || 0) / 100 ).toLocaleString()} сом</span>
+                  <div className="flex justify-between text-emerald-800">
+                    <span>Наценка ({markupType === 'percent' ? newMarkupPercent : parseFloat(newMarkupPercent).toFixed(1).replace(/\.0$/, '')}%):</span>
+                    <span className="font-mono font-bold">
+                      {Math.round(markupType === 'percent' 
+                        ? ((parseFloat(newPhonePrice) || 0) * (parseFloat(newMarkupPercent) || 0) / 100) 
+                        : (parseFloat(newMarkupFixed) || 0)).toLocaleString()} сом
+                    </span>
                   </div>
                   <div className="flex justify-between font-bold text-stone-900 border-t border-stone-200/80 pt-1 mt-1 text-xs">
                     <span>Итого по рассрочке ({newDuration} мес):</span>
                     <span className="font-mono">
-                      {( (parseFloat(newPhonePrice) || 0) * (1 + (parseFloat(newMarkupPercent) || 0) / 100) ).toLocaleString()} сом
+                      {Math.round(markupType === 'percent'
+                        ? ((parseFloat(newPhonePrice) || 0) * (1 + (parseFloat(newMarkupPercent) || 0) / 100))
+                        : ((parseFloat(newPhonePrice) || 0) + (parseFloat(newMarkupFixed) || 0))).toLocaleString()} сом
                     </span>
                   </div>
-                  <p className="text-[10px] text-stone-400 mt-1 italic text-center leading-xs">
-                     Будет сформировано {newDuration} плановых платежей по {Math.round(( (parseFloat(newPhonePrice) || 0) * (1 + (parseFloat(newMarkupPercent) || 0) / 100) ) / (parseInt(newDuration) || 6)).toLocaleString()} сом.
-                  </p>
+                  {!isManualSchedule && (
+                    <p className="text-[10px] text-stone-400 mt-1.5 italic text-center leading-xs">
+                       Автоматически рассчитанный график платежей. Вы можете отредактировать суммы или даты ниже.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -2277,11 +2357,11 @@ export default function App() {
               {customPayments.length > 0 && (
                 <div className="space-y-1.5 border-t border-stone-100 pt-3">
                   <span className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1">
-                    График платежей (настройте даты здесь):
+                    График платежей (настройте суммы и даты здесь):
                   </span>
                   <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
                     {customPayments.map((p, idx) => (
-                      <div key={idx} className="flex items-center justify-between gap-2 bg-stone-50 p-1.5 rounded-lg border border-stone-200/60 shadow-xxs">
+                      <div key={idx} className="flex items-center justify-between gap-1.5 bg-stone-50 p-1.5 rounded-lg border border-stone-200/60 shadow-xxs">
                         <span className="text-[9px] font-bold font-mono text-stone-400 w-5 text-center">
                           #{idx + 1}
                         </span>
@@ -2297,14 +2377,19 @@ export default function App() {
                                 handleCustomPaymentDateChange(idx, standardDate);
                               }
                             }}
-                            className="w-full px-2 py-1 border border-stone-200 rounded-md text-xs font-semibold text-stone-850 bg-white focus:outline-none focus:border-stone-900 focus:ring-1 focus:ring-stone-900 font-mono"
+                            className="w-full px-1.5 py-1 border border-stone-200 rounded-md text-[11px] font-semibold text-stone-850 bg-white focus:outline-none focus:border-stone-900 focus:ring-1 focus:ring-stone-900 font-mono"
                           />
                         </div>
 
-                        <div className="text-right shrink-0 px-1">
-                          <span className="text-xs font-bold font-mono text-stone-800">
-                            {p.amount.toLocaleString()} сом
-                          </span>
+                        <div className="w-24 shrink-0 relative">
+                          <input
+                            type="number"
+                            required
+                            value={p.amount}
+                            onChange={(e) => handleCustomPaymentAmountChange(idx, e.target.value)}
+                            className="w-full pl-2 pr-5 py-1 border border-stone-200 rounded-md text-[11px] font-bold text-stone-850 bg-white focus:outline-none focus:border-stone-900 focus:ring-1 focus:ring-stone-900 font-mono text-right"
+                          />
+                          <span className="absolute right-1.5 top-1.5 text-[9px] font-bold text-stone-400 select-none">с.</span>
                         </div>
                       </div>
                     ))}
