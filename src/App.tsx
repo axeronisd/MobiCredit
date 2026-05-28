@@ -2232,7 +2232,7 @@ export default function App() {
                     <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 text-[10px] font-semibold">мес</span>
                   </div>
                   <div className="flex flex-wrap gap-1">
-                    {['3', '6', '12', '18', '24'].map((m) => (
+                    {['1', '2', '3', '4', '5', '6'].map((m) => (
                       <button
                         key={m}
                         type="button"
