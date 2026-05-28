@@ -24,78 +24,16 @@ import {
   KeyRound,
   UserPlus,
   Lock,
-  UserCheck
+  UserCheck,
+  Edit,
+  CalendarDays
 } from 'lucide-react';
 import { ClientInstallment, Payment, UserAccount } from './types';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
 
-// Mock Initial Kyrgyz clients data (amounts in SOM - KGS)
-const INITIAL_CLIENTS: ClientInstallment[] = [
-  {
-    id: 'cl-1',
-    tenantId: 'usr-manager1',
-    firstName: 'Адилет',
-    lastName: 'Маматов',
-    inn: '21508200501234', // 14-digit Kyrgyz PIN which acts as INN and is on ID passport
-    phoneModel: 'iPhone 15 Pro Max 256GB',
-    phone: '+996 555 123 456, +996 700 112 233',
-    imei: '354921098432101',
-    phonePrice: 98000,
-    markupPercent: 15,
-    totalRemaining: 112700,
-    payments: [
-      { id: 'p-1', date: '15.06.2026', amount: 18783, status: 'pending' },
-      { id: 'p-2', date: '15.07.2026', amount: 18783, status: 'pending' },
-      { id: 'p-3', date: '15.08.2026', amount: 18783, status: 'pending' },
-      { id: 'p-4', date: '15.09.2026', amount: 18783, status: 'pending' },
-      { id: 'p-5', date: '15.10.2026', amount: 18783, status: 'pending' },
-      { id: 'p-6', date: '18.11.2026', amount: 18785, status: 'pending' },
-    ]
-  },
-  {
-    id: 'cl-2',
-    tenantId: 'usr-manager1',
-    firstName: 'Айсулуу',
-    lastName: 'Кадырова',
-    inn: '10212199500432',
-    phoneModel: 'Samsung Galaxy S24 Ultra',
-    phone: '+996 707 987 654',
-    imei: '358912345678912',
-    phonePrice: 85000,
-    markupPercent: 12,
-    totalRemaining: 63400, // Partial payment already made
-    payments: [
-      { id: 'p-7', date: '10.06.2026', amount: 15866, status: 'pending' },
-      { id: 'p-8', date: '10.07.2026', amount: 15866, status: 'pending' },
-      { id: 'p-9', date: '10.08.2026', amount: 15866, status: 'pending' },
-      { id: 'p-10', date: '10.09.2026', amount: 15866, status: 'pending' },
-      { id: 'p-11', date: '10.10.2026', amount: 15866, status: 'pending' },
-      { id: 'p-12', date: '10.11.2026', amount: 15866, status: 'pending' },
-    ]
-  },
-  {
-    id: 'cl-3',
-    tenantId: 'usr-manager1',
-    firstName: 'Нурбек',
-    lastName: 'Токтосунов',
-    inn: '20905198801928',
-    phoneModel: 'Redmi Note 13 Pro+',
-    phone: '+996 772 112 233',
-    imei: '862341059382173',
-    phonePrice: 32000,
-    markupPercent: 10,
-    totalRemaining: 35200,
-    payments: [
-      { id: 'p-13', date: '20.06.2026', amount: 5866, status: 'pending' },
-      { id: 'p-14', date: '20.07.2026', amount: 5866, status: 'pending' },
-      { id: 'p-15', date: '20.08.2026', amount: 5866, status: 'pending' },
-      { id: 'p-16', date: '20.09.2026', amount: 5866, status: 'pending' },
-      { id: 'p-17', date: '20.10.2026', amount: 5866, status: 'pending' },
-      { id: 'p-18', date: '20.11.2026', amount: 5870, status: 'pending' },
-    ]
-  }
-];
+// Mock Initial Kyrgyz clients data (amounts in SOM - KGS) - set to empty for production as requested
+const INITIAL_CLIENTS: ClientInstallment[] = [];
 
 // Initial Kyrgyz accounts for managers & admins
 const INITIAL_ACCOUNTS: UserAccount[] = [
@@ -182,8 +120,12 @@ export default function App() {
     return null;
   });
 
-  const [login, setLogin] = useState('');
-  const [password, setPassword] = useState('');
+  const [login, setLogin] = useState(() => {
+    return localStorage.getItem('installments-saved-login') || '';
+  });
+  const [password, setPassword] = useState(() => {
+    return localStorage.getItem('installments-saved-password') || '';
+  });
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -240,24 +182,20 @@ export default function App() {
 
     const unsubscribeClients = onSnapshot(collection(db, 'clients'), (snapshot) => {
       const clientsList: ClientInstallment[] = [];
-      snapshot.forEach((doc) => {
-        clientsList.push(doc.data() as ClientInstallment);
+      snapshot.forEach((snapshotDoc) => {
+        const cl = snapshotDoc.data() as ClientInstallment;
+        if (cl.id === 'cl-1' || cl.id === 'cl-2' || cl.id === 'cl-3') {
+          // Permanently purge initial mock records from Firestore database
+          deleteDoc(doc(db, 'clients', cl.id)).catch(err => {
+            console.error('Error purger mock client document:', err);
+          });
+        } else {
+          clientsList.push(cl);
+        }
       });
-      if (clientsList.length === 0) {
-        // Bootstrap
-        INITIAL_CLIENTS.forEach(async (cl) => {
-          try {
-            await setDoc(doc(db, 'clients', cl.id), cl);
-          } catch (e) {
-            console.error('Error bootstrapping client', e);
-          }
-        });
-        setClients(INITIAL_CLIENTS);
-      } else {
-        clientsList.sort((a, b) => b.id.localeCompare(a.id));
-        setClients(clientsList);
-        localStorage.setItem('clients-database-v2', JSON.stringify(clientsList));
-      }
+      clientsList.sort((a, b) => b.id.localeCompare(a.id));
+      setClients(clientsList);
+      localStorage.setItem('clients-database-v2', JSON.stringify(clientsList));
       setDbLoading(false);
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'clients');
@@ -274,6 +212,13 @@ export default function App() {
   const [clientStatusTab, setClientStatusTab] = useState<'all' | 'active' | 'closed'>('all');
   const [selectedTenantFilter, setSelectedTenantFilter] = useState<string>('all');
   const [selectedClient, setSelectedClient] = useState<ClientInstallment | null>(null);
+
+  // Edit Existing Client states
+  const [editingClient, setEditingClient] = useState<ClientInstallment | null>(null);
+  const [editPhonePrice, setEditPhonePrice] = useState('');
+  const [editMarkupPercent, setEditMarkupPercent] = useState('');
+  const [editDuration, setEditDuration] = useState('6');
+  const [editStartDate, setEditStartDate] = useState('');
 
   // Time & custom range analytics filter states
   const [dateFilterType, setDateFilterType] = useState<'all' | 'week' | 'month' | 'year' | 'custom'>('all');
@@ -408,6 +353,8 @@ export default function App() {
         setCurrentUser(matchedUser);
         localStorage.setItem('isLoggedIn', 'true');
         localStorage.setItem('installments-current-user', JSON.stringify(matchedUser));
+        localStorage.setItem('installments-saved-login', matchedUser.login);
+        localStorage.setItem('installments-saved-password', matchedUser.passwordHash);
       } else {
         setLoginError('Неверный логин или пароль. Попробуйте снова.');
       }
@@ -419,8 +366,8 @@ export default function App() {
     setCurrentUser(null);
     localStorage.removeItem('isLoggedIn');
     localStorage.removeItem('installments-current-user');
-    setLogin('');
-    setPassword('');
+    setLogin(localStorage.getItem('installments-saved-login') || '');
+    setPassword(localStorage.getItem('installments-saved-password') || '');
     setSelectedClient(null);
     setActiveTab('reestr');
   };
@@ -450,6 +397,8 @@ export default function App() {
         setCurrentUser(matchedUser);
         localStorage.setItem('isLoggedIn', 'true');
         localStorage.setItem('installments-current-user', JSON.stringify(matchedUser));
+        localStorage.setItem('installments-saved-login', 'qwerty');
+        localStorage.setItem('installments-saved-password', 'qwerty');
       } else {
         // Safe bypass/fallback check: create or load virtual user session if DB sync is slightly delayed
         const virtualUser: UserAccount = {
@@ -463,6 +412,8 @@ export default function App() {
         setCurrentUser(virtualUser);
         localStorage.setItem('isLoggedIn', 'true');
         localStorage.setItem('installments-current-user', JSON.stringify(virtualUser));
+        localStorage.setItem('installments-saved-login', 'qwerty');
+        localStorage.setItem('installments-saved-password', 'qwerty');
       }
     }, 600);
   };
@@ -545,6 +496,107 @@ export default function App() {
       } catch (error) {
         handleFirestoreError(error, OperationType.DELETE, `users/${userId}`);
         setAdminPanelError('Ошибка удаления из базы данных');
+      }
+    }
+  };
+
+  // Delete client function
+  const handleDeleteClient = async (clientId: string) => {
+    if (confirm('Вы уверены, что хотите удалить эту карточку заемщика навсегда? Все связанные финансовые записи будут удалены.')) {
+      try {
+        await deleteDoc(doc(db, 'clients', clientId));
+        if (selectedClient?.id === clientId) {
+          setSelectedClient(null);
+        }
+      } catch (e) {
+        handleFirestoreError(e, OperationType.DELETE, `clients/${clientId}`);
+        alert('Ошибка при удалении карточки');
+      }
+    }
+  };
+
+  // Open Edit modal
+  const openEditClientModal = (client: ClientInstallment) => {
+    setEditingClient(client);
+    setEditPhonePrice(client.phonePrice.toString());
+    setEditMarkupPercent(client.markupPercent.toString());
+    setEditDuration(client.payments.length.toString());
+    if (client.payments.length > 0) {
+      setEditStartDate(toInputDate(client.payments[0].date));
+    } else {
+      setEditStartDate(toInputDate(new Date().toLocaleDateString('ru-RU')));
+    }
+  };
+
+  // Edit client function
+  const handleEditClientSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClient || !editPhonePrice || !editMarkupPercent || !editDuration || !editStartDate) {
+      alert('Пожалуйста, заполните основные поля для перерасчета!');
+      return;
+    }
+    
+    if (confirm('Внимание: перестроение графика сбросит дату и длительность существующих платежей (статус "оплачено" может быть потерян при изменении длительности графика). Продолжить?')) {
+      const price = parseFloat(editPhonePrice);
+      const markup = parseFloat(editMarkupPercent) || 0;
+      const duration = parseInt(editDuration) || 6;
+      
+      if (price <= 0 || duration <= 0) {
+        alert('Некорректные параметры!');
+        return;
+      }
+      
+      const calculatedTotal = price + (price * markup) / 100;
+      const monthlyAmount = calculatedTotal / duration;
+
+      let start = new Date(editStartDate);
+      if (isNaN(start.getTime())) {
+        start = new Date();
+      }
+      
+      const newPayments: Payment[] = [];
+      for (let i = 0; i < duration; i++) {
+        const pDate = new Date(start);
+        pDate.setMonth(start.getMonth() + i);
+        
+        // Retain paid status if the payment id/index matches roughly, though for simplicity we just generate pending. Wait, if they only edited margin but want to keep paid ones intact, it's safer to just sync them or mark old payments paid.
+        let oldStatus: 'paid' | 'pending' = 'pending';
+        if (editingClient.payments[i] && editingClient.payments[i].status === 'paid') {
+           oldStatus = 'paid';
+        }
+
+        let pAmount = Math.round(monthlyAmount);
+        if (i === duration - 1) {
+          const sumSoFar = Math.round(monthlyAmount) * (duration - 1);
+          pAmount = Math.round(calculatedTotal) - sumSoFar;
+        }
+
+        newPayments.push({
+          id: editingClient.payments[i] ? editingClient.payments[i].id : `p-${Date.now()}-${i}`,
+          date: pDate.toLocaleDateString('ru-RU'),
+          amount: pAmount,
+          status: oldStatus
+        });
+      }
+
+      // Re-calculate the remained total based on how many are NOT paid yet
+      const newTotalRemaining = newPayments.filter(p => p.status === 'pending').reduce((sum, p) => sum + p.amount, 0);
+
+      const updatedClient: ClientInstallment = {
+        ...editingClient,
+        phonePrice: price,
+        markupPercent: markup,
+        totalRemaining: newTotalRemaining,
+        payments: newPayments
+      };
+
+      try {
+        await setDoc(doc(db, 'clients', updatedClient.id), updatedClient);
+        setSelectedClient(updatedClient); // Refresh local view
+        setEditingClient(null);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `clients/${editingClient.id}`);
+        alert('Ошибка при изменении карточки.');
       }
     }
   };
@@ -1640,12 +1692,28 @@ export default function App() {
                           )}
                         </div>
                       </div>
-                      <button 
-                        onClick={() => setSelectedClient(null)}
-                        className="p-1 px-1.5 bg-stone-50 hover:bg-stone-100 text-stone-500 rounded-md text-xs font-semibold cursor-pointer hidden lg:block"
-                      >
-                        Свернуть
-                      </button>
+                      <div className="flex flex-col items-end gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => openEditClientModal(selectedClient)}
+                            className="p-1 px-1.5 bg-sky-50 hover:bg-sky-100 border border-sky-100 text-sky-600 rounded-md text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteClient(selectedClient.id)}
+                            className="p-1 px-1.5 bg-red-50 hover:bg-red-100 border border-red-100 text-red-600 rounded-md text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <button 
+                          onClick={() => setSelectedClient(null)}
+                          className="p-1 px-1.5 bg-stone-50 hover:bg-stone-100 text-stone-500 rounded-md text-xs font-semibold cursor-pointer hidden lg:block border border-stone-200/50"
+                        >
+                          Свернуть
+                        </button>
+                      </div>
                     </div>
 
                     {/* Hardware purchase summary */}
@@ -1876,6 +1944,100 @@ export default function App() {
           Учет мобильных устройств • {new Date().getFullYear()}
         </p>
       </footer>
+
+      {/* NEW CLIENT MODAL DRAWER - ON DEMAND */}
+      {editingClient && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-white rounded-2xl w-full max-w-md p-5 sm:p-7 space-y-4 shadow-2xl relative max-h-[92vh] overflow-y-auto border border-stone-200"
+          >
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-xl font-bold tracking-tight text-stone-900 leading-none">Изменить договор</h3>
+                <p className="text-[11px] text-stone-400 leading-none mt-1">Перестройка графика ({editingClient.firstName} {editingClient.lastName})</p>
+              </div>
+              <button 
+                onClick={() => setEditingClient(null)}
+                className="p-1 hover:bg-stone-100 rounded-lg text-stone-400 hover:text-stone-900 cursor-pointer"
+              >
+                <X className="w-4.5 h-4.5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditClientSubmit} className="space-y-4 pt-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-[10px] font-semibold text-stone-500 mb-1">Сумма покупки (с.)</label>
+                  <input
+                    type="number"
+                    required
+                    value={editPhonePrice}
+                    onChange={(e) => setEditPhonePrice(e.target.value)}
+                    className="w-full px-3 py-2 border border-stone-200 rounded-lg text-xs hover:border-stone-300 focus:outline-none focus:border-stone-900 font-semibold font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-stone-500 mb-1">Наценка (%)</label>
+                  <input
+                    type="number"
+                    required
+                    value={editMarkupPercent}
+                    onChange={(e) => setEditMarkupPercent(e.target.value)}
+                    className="w-full px-3 py-2 border border-stone-200 rounded-lg text-xs hover:border-stone-300 focus:outline-none focus:border-stone-900 font-bold font-mono text-emerald-800 bg-emerald-50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-stone-500 mb-1">Даты оплаты</label>
+                  <input
+                    type="date"
+                    required
+                    value={editStartDate}
+                    onChange={(e) => setEditStartDate(e.target.value)}
+                    className="w-full px-2 py-2 border border-stone-200 rounded-lg text-xs hover:border-stone-300 focus:outline-none focus:border-stone-900 font-semibold font-mono"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-[10px] font-semibold text-stone-500 mb-1">Срок (мес)</label>
+                  <input
+                    type="number"
+                    max="60"
+                    required
+                    value={editDuration}
+                    onChange={(e) => setEditDuration(e.target.value)}
+                    className="w-full px-3 py-2 border border-stone-200 rounded-lg text-xs hover:border-stone-300 focus:outline-none focus:border-stone-900 font-semibold font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-amber-50 rounded-xl p-3 border border-amber-100 flex items-start gap-2">
+                <CalendarDays className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-[10px] text-amber-800 leading-tight">
+                  <strong className="block mb-0.5 font-bold">Внимание: перерасчет графика!</strong>
+                  Изменение срока (длительности) приведет к полному перерасчету платежей. Для сохранения статуса "оплачено" рекомендуется изменять только <strong>наценку</strong> или <strong>стартовую дату</strong> (при условии, что старая длительность совпадает с новой).
+                </p>
+              </div>
+
+               <div className="pt-2 flex gap-2">
+                <button
+                  type="submit"
+                  className="flex-1 py-3 bg-stone-900 hover:bg-stone-800 active:bg-stone-950 text-stone-50 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+                >
+                  Пересохранить
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingClient(null)}
+                  className="px-4 py-3 bg-stone-50 hover:bg-stone-100 border border-stone-200 text-stone-600 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  Отмена
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
 
       {/* NEW CLIENT MODAL DRAWER - ON DEMAND */}
       {isAddModalOpen && (
