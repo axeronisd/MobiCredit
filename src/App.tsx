@@ -301,8 +301,24 @@ export default function App() {
   const handleCustomPaymentDateChange = (index: number, newDate: string) => {
     setCustomPayments((prev) => {
       const next = [...prev];
-      if (next[index]) {
-        next[index] = { ...next[index], date: newDate };
+      if (!next[index]) return prev;
+
+      next[index] = { ...next[index], date: newDate };
+
+      // If editing the first payment, automatically cascade to subsequent payments month-by-month
+      if (index === 0) {
+        const parts = newDate.split('.');
+        if (parts.length === 3) {
+          const [d, m, y] = parts.map(Number);
+          for (let i = 1; i < next.length; i++) {
+            const date = new Date(y, m - 1, d);
+            date.setMonth(date.getMonth() + i);
+            const dayStr = String(date.getDate()).padStart(2, '0');
+            const monStr = String(date.getMonth() + 1).padStart(2, '0');
+            const yr = date.getFullYear();
+            next[i] = { ...next[i], date: `${dayStr}.${monStr}.${yr}` };
+          }
+        }
       }
       return next;
     });
